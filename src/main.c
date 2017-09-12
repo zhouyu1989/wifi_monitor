@@ -15,6 +15,8 @@ int main(int argc, char **argv)
     int status = 0;
     int status_bak = 0;
 
+    // avoid the wifi monitor ok
+    sleep(10);
     AmsExInit();
 
     while (1) {
@@ -25,12 +27,23 @@ int main(int argc, char **argv)
         }
 
         if (status_bak != status) {
-            if (status == WIFI_CONNECTED) {
-                ReportSysStatus(WIFI_AMS_CONNECT);
-            } else if (status == NETSERVER_CONNECTED) {
-                ReportSysStatus(WIFI_AMS_UNCONNECTED);
+            // if (status == WIFI_CONNECTED) {
+            //     printf("wifi report wifi connect\n");
+            //     ReportSysStatus(WIFI_AMS_CONNECT);
+            // } else if (status == NETSERVER_CONNECTED) {
+            //     ReportSysStatus(WIFI_AMS_UNCONNECTED);
+            //     printf("wifi report net unconnect\n");
+            // } else {
+            //     ReportSysStatus(WIFI_AMS_UNCONNECTED);
+            //     printf("wifi report net unconnect\n");
+            // }
+
+            if (status == NETSERVER_CONNECTED) {
+                    printf("wifi report wifi connect\n");
+                    ReportSysStatus(WIFI_AMS_CONNECT);
             } else {
-                ReportSysStatus(WIFI_AMS_UNCONNECTED);
+                    ReportSysStatus(WIFI_AMS_UNCONNECTED);
+                    printf("wifi report net unconnect\n");
             }
             
             status_bak = status;
