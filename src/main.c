@@ -29,7 +29,6 @@ int judge_report_connect()
     int ret = 0;
     int status = 0;
 
-    printf("begin to  ping server...\n");
     while (netpingtime++ < 3) {
         ret = network_get_status(&status);
         if (ret < 0) {
