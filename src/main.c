@@ -69,7 +69,7 @@ int main(int argc, char **argv)
 
     AmsExInit();
 
-    sleep(2);
+    sleep(5);
     ret =  wifi_get_listnetwork(&network_num);
     if ((network_num == 0) && (is_report_unconnect == 0)) {
         judge_report_unconnect();
