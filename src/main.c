@@ -67,6 +67,15 @@ int main(int argc, char **argv)
     int nofoundtime = 0;
     int network_num = 0;
 
+    while (1) {
+        if ((access(WIFI_WPA_CTRL_PATH, F_OK)) != -1) {
+            break;
+        } else {
+            sleep(1);
+            continue;
+        }
+    }
+
     AmsExInit();
 
     ret =  wifi_get_listnetwork(&network_num);
