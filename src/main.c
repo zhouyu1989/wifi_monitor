@@ -38,7 +38,9 @@ int judge_report_connect()
 
         if ((status == NETSERVER_CONNECTED) && (is_report_connect == 0)) {
             printf("wifi ams report connect\n");
-            ReportSysStatus(WIFI_AMS_CONNECT);
+            if (ReportSysStatus(WIFI_AMS_CONNECT) != 0) {
+                continue;
+            }
             is_report_unconnect = 0;
             is_report_connect = 1;
             return status;
@@ -53,7 +55,10 @@ int judge_report_connect()
 
 void judge_report_unconnect(){
     printf("wifi ams report unconnect\n");
-    ReportSysStatus(WIFI_AMS_UNCONNECTED);
+    if (ReportSysStatus(WIFI_AMS_UNCONNECTED) != 0) {
+        return;
+    }
+
     is_report_unconnect = 1;
     is_report_connect = 0;
 }
@@ -75,8 +80,17 @@ int main(int argc, char **argv)
             continue;
         }
     }
+    printf("wpa_supplicant start ok\n");
 
-    AmsExInit();
+    while (1) {
+        if (AmsExInit() == 0) {
+            break;
+        } else {
+            sleep(1);
+            continue;
+        }
+    }
+    printf("ams start ok\n");
 
     ret =  wifi_get_listnetwork(&network_num);
     if ((network_num == 0) && (is_report_unconnect == 0)) {
