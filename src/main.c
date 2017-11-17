@@ -121,6 +121,8 @@ int main(int argc, char **argv)
                 nofoundtime = 0;
             } else if (strstr(monitor_buf, "CTRL-EVENT-NETWORK-NOT-FOUND")) {
                 nofoundtime++;
+            } else if ((strstr(monitor_buf, "CTRL-EVENT-DISCONNECTED") != NULL) && (strstr(monitor_buf, "reason=3 locally_generated=1") != NULL)) {
+                judge_report_unconnect();
             } else {
                 continue;
             }
