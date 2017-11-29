@@ -6,6 +6,9 @@
 #include <fcntl.h>
 #include <stdlib.h>
 #include <errno.h>
+#include <sys/socket.h>
+#include <linux/route.h>
+#include <sys/un.h>
 
 #include <wpa_command.h>
 #include <ams/AmsExport.h>
@@ -14,7 +17,11 @@
 
 #define WIFI_AMS_UNCONNECTED "{\"Wifi\":false}"
 
+#define WIFI_EVENT_PATH "/tmp/wifi_monitor_event"
+
 #define WIFI_FAILED_TIMES 3
+#define WIFI_ROAM_LIMIT_SIGNAL -65
+#define WIFI_SWITCH_LIMIT_SIGNAL -80
 
 
 static int is_report_unconnect = 0;
@@ -22,6 +29,11 @@ static int is_report_connect = 0;
 int buflen = 2047;
 char monitor_buf[2048] = {0};
 
+static int sock_event_fd = 0;
+
+static int channel[26] = {2412, 2417, 2422, 2427, 2432, 2437, 2442, 2447, 2452, 2457, 2462, 2467, 2472, 5180, 5200, 5220, 5240, 5260, 5280, 5300, 5320, 5745, 5765, 5785, 5805, 5825};
+
+static int scan_index[6] = {4, 4, 5, 4, 4, 5};
 
 int judge_report_connect()
 {
@@ -63,34 +75,13 @@ void judge_report_unconnect(){
     is_report_connect = 0;
 }
 
-int main(int argc, char **argv)
-{
+int wifi_get_monitor_event() {
     int ret = 0;
     // int buflen = 127;
     // char monitor_buf[128] = {0};
     int hardsharkfaild = 0;
     int nofoundtime = 0;
     int network_num = 0;
-
-    while (1) {
-        if ((access(WIFI_WPA_CTRL_PATH, F_OK)) != -1) {
-            break;
-        } else {
-            sleep(1);
-            continue;
-        }
-    }
-    printf("wpa_supplicant start ok\n");
-
-    while (1) {
-        if (AmsExInit() == 0) {
-            break;
-        } else {
-            sleep(1);
-            continue;
-        }
-    }
-    printf("ams start ok\n");
 
     ret =  wifi_get_listnetwork(&network_num);
     if ((network_num == 0) && (is_report_unconnect == 0)) {
@@ -154,6 +145,191 @@ int main(int argc, char **argv)
             }
         }
     }
+
+    return 0;
+}
+
+static int find_index(int val, int *channel, int len)
+{
+    int i = 0;
+
+    for (i = 0; i < len; i++) {
+        if (channel[i] == val) {
+            return i;
+        }
+    }
+
+    return -1;
+}
+
+static int find_flag(int index, int *scan_index, int len)
+{
+    int i = 0;
+    int sum = 0;
+
+    for (i = 0; i < len; i++) {
+        if (scan_index[i] + sum > index) {
+            return i;
+        }
+        sum += scan_index[i];
+    }
+    return -1;
+}
+
+static int calc_scan_sum(int index)
+{
+    int i = 0;
+    int sum = 0;
+
+    for (i = 0; i < index; i++) {
+        sum += scan_index[i];
+    }
+    return sum;
+}
+
+int wifi_roam_scan_event() {
+    int ret = 0;
+    int signal = 0;
+    int first_time = 0;
+    int index = 0;
+    int current_freq = 0;
+    int freq[6] = {0};
+    static unsigned long time_sum = 0;
+    int time = 1;
+    char testbuf[128] = {0};
+    int size = 0;
+
+    while (1) {
+        ret = wifi_get_signal(&signal);
+        if (ret == 0) {
+            printf("wifi current signal %d\n", signal);
+            sprintf(testbuf, "wifi current signal :: %d", signal);
+
+            size = send(sock_event_fd, testbuf, 128, 0);
+            printf("zpershuai :: send signal size %d\n", size);
+
+            if (signal < WIFI_SWITCH_LIMIT_SIGNAL) {
+
+            } else {
+                if (signal < WIFI_ROAM_LIMIT_SIGNAL) {
+                    if (first_time == 0) {
+                        ret = wifi_get_current_channel(&current_freq);
+                        if (ret < 0) {
+                            continue;
+                        }
+
+                        index = find_index(current_freq, channel, sizeof(channel) / sizeof(int));
+                        index = find_flag(index, scan_index, sizeof(scan_index) / sizeof(int));
+
+                        first_time = 1;
+                        printf("rbscan index %d\n", index);
+                    }
+                    else {
+                        index++;
+
+                        printf("rbscan index %d\n", index);
+                        if (index == sizeof(scan_index) / sizeof(int)) {
+                            index = 0;
+                        }
+                    }
+                    memcpy(freq, &channel[calc_scan_sum(index)], scan_index[index] * sizeof(int));
+
+                    wifi_scan_channel(scan_index[index], freq);
+
+                    time_sum++;
+
+                } else {
+                    first_time = 0;
+                    time = 1;
+                    time_sum = 0;
+                }
+
+                printf( "robot scan time  %lu", time_sum);
+                if ((time_sum > 3 * sizeof(scan_index) / sizeof(int)) &&
+                    (time_sum < 5 * sizeof(scan_index) / sizeof(int))) {
+                    time = 60;
+                }
+                else if (time_sum >= 5 * sizeof(scan_index) / sizeof(int)) {
+                    time = 60 * 3;
+                }
+                else {
+                    time = 1;
+                }
+
+                sleep(time);
+            }
+        }
+    }
+
+    return 0;
+}
+
+static int wifi_sock_init() {
+    int sock_fd = 0;
+    unsigned int len = 0;
+    struct sockaddr_un addr;
+
+    memset(&addr, 0, sizeof(addr));
+
+    sock_fd = socket(AF_UNIX, SOCK_DGRAM, 0);
+    if (sock_fd < 0) {
+        printf("wifi event client create error %d\n", errno);
+        return -1;
+    }
+
+    addr.sun_family = AF_UNIX;
+    strncpy(addr.sun_path, WIFI_EVENT_PATH, strlen(WIFI_EVENT_PATH));
+    len = strlen(addr.sun_path) + sizeof(addr.sun_family);
+
+    // if (bind(sock_fd, (struct sockaddr *)&addr, len) < 0)  {
+    //     perror("bind error");
+    //     close(sock_fd);
+    //     return -2;
+    // }
+
+    if (connect(sock_fd, (struct sockaddr *)&addr, len) < 0)  {
+        perror("connect error");
+        close(sock_fd);
+        return -3;
+    }
+
+    return sock_fd;
+}
+
+int main(int argc, char **argv)
+{
+    while (1) {
+        if ((access(WIFI_WPA_CTRL_PATH, F_OK)) != -1) {
+            break;
+        } else {
+            sleep(1);
+            continue;
+        }
+    }
+    printf("wpa_supplicant start ok\n");
+
+    while (1) {
+        if (AmsExInit() == 0) {
+            break;
+        } else {
+            sleep(1);
+            continue;
+        }
+    }
+    printf("ams start ok\n");
+
+    sock_event_fd = wifi_sock_init();
+    if (sock_event_fd < 0) {
+        perror("wifi socket init error");
+        return -1;
+    }
+
+    if (fork() == 0) {
+        wifi_get_monitor_event();
+    } else {
+        wifi_roam_scan_event();
+    }
+
 
     return 0;
 }
