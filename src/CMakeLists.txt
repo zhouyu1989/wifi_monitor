@@ -14,3 +14,4 @@ add_executable(wifi_monitor ${DIR_SRCS})
 
 target_link_libraries(wifi_monitor wpa_ctrl)
 target_link_libraries(wifi_monitor rkamsex)
+target_link_libraries(wifi_monitor json-c)

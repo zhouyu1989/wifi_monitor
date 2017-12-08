@@ -13,6 +13,8 @@
 #include <wpa_command.h>
 #include <ams/AmsExport.h>
 
+#include <json-c/json.h>
+
 #define WIFI_AMS_CONNECT "{\"Wifi\":true}"
 
 #define WIFI_AMS_UNCONNECTED "{\"Wifi\":false}"
@@ -34,6 +36,45 @@ static int sock_event_fd = 0;
 static int channel[26] = {2412, 2417, 2422, 2427, 2432, 2437, 2442, 2447, 2452, 2457, 2462, 2467, 2472, 5180, 5200, 5220, 5240, 5260, 5280, 5300, 5320, 5745, 5765, 5785, 5805, 5825};
 
 static int scan_index[6] = {4, 4, 5, 4, 4, 5};
+
+/**
+ * trans buf to net manager
+ *
+ * @param sock net manager socket fd
+ * @param buf send buf
+ * @param buflen
+ *
+ * @return 0 OK, other ERROR
+ */
+static int json_transmit_buf(int sock, char *buf, int buflen)
+{
+    json_object *root = json_object_new_object();
+    char *trans = NULL;
+    char *p_index = NULL;
+    char msg[48] = {0};
+    int ret = 0;
+
+    p_index = strchr(buf + 4, ' ');
+
+    // strncpy(msg, buf + 3, p_index - buf + 3);
+    strncpy(msg, buf + 3, p_index - buf - 3);
+    json_object_object_add(root, "msg", json_object_new_string(msg));
+
+    if (p_index != NULL) {
+        json_object_object_add(root, "data", json_object_new_string(p_index + 1));
+    }
+
+    trans = json_object_to_json_string(root);
+    if (send(sock, trans, strlen(trans), 0) < 0) {
+        printf("send sock error : %d\n", errno);
+        ret = -errno;
+    }
+
+    json_object_put(root);
+
+    return ret;
+}
+
 
 int judge_report_connect()
 {
@@ -82,6 +123,7 @@ int wifi_get_monitor_event() {
     int hardsharkfaild = 0;
     int nofoundtime = 0;
     int network_num = 0;
+    int size = 0;
 
     ret =  wifi_get_listnetwork(&network_num);
     if ((network_num == 0) && (is_report_unconnect == 0)) {
@@ -103,37 +145,43 @@ int wifi_get_monitor_event() {
         ret = wifi_ctrl_recv(monitor_buf, &buflen);
 
         if (ret == 0) {
-            printf("ret %d buf: %s len  %d\n", ret, monitor_buf, buflen);
-
-            if (strstr(monitor_buf, "Handshake failed")) {
-                hardsharkfaild++;
-            } else if (strstr (monitor_buf, "CTRL-EVENT-CONNECTED")) {
-                hardsharkfaild = 0;
-                nofoundtime = 0;
-            } else if (strstr(monitor_buf, "CTRL-EVENT-NETWORK-NOT-FOUND")) {
-                nofoundtime++;
-            } else if ((strstr(monitor_buf, "CTRL-EVENT-DISCONNECTED") != NULL) && (strstr(monitor_buf, "reason=3 locally_generated=1") != NULL)) {
-                judge_report_unconnect();
-            } else {
-                continue;
+            if (strstr(monitor_buf, "CTRL-EVENT-")) {
+                if (strstr(monitor_buf, "CTRL-EVENT-BSS-") == NULL) {
+                    // size = send(sock_event_fd, monitor_buf, buflen, 0);
+                    ret = json_transmit_buf(sock_event_fd, monitor_buf, buflen);
+                    printf("ret %d buf: %s len  %d size\n", ret, monitor_buf, buflen, size);
+                }
             }
 
-            if (((hardsharkfaild == WIFI_FAILED_TIMES) || (nofoundtime == WIFI_FAILED_TIMES)) && (is_report_unconnect == 0)) {
-                judge_report_unconnect();
-            } else if (((hardsharkfaild == 0) && (nofoundtime == 0)) && (is_report_connect == 0)) {
-                judge_report_connect();
-            }
+            // if (strstr(monitor_buf, "Handshake failed")) {
+            //     hardsharkfaild++;
+            // } else if (strstr (monitor_buf, "CTRL-EVENT-CONNECTED")) {
+            //     hardsharkfaild = 0;
+            //     nofoundtime = 0;
+            // } else if (strstr(monitor_buf, "CTRL-EVENT-NETWORK-NOT-FOUND")) {
+            //     nofoundtime++;
+            // } else if ((strstr(monitor_buf, "CTRL-EVENT-DISCONNECTED") != NULL) && (strstr(monitor_buf, "reason=3 locally_generated=1") != NULL)) {
+            //     judge_report_unconnect();
+            // } else {
+            //     continue;
+            // }
+
+            // if (((hardsharkfaild == WIFI_FAILED_TIMES) || (nofoundtime == WIFI_FAILED_TIMES)) && (is_report_unconnect == 0)) {
+            //     judge_report_unconnect();
+            // } else if (((hardsharkfaild == 0) && (nofoundtime == 0)) && (is_report_connect == 0)) {
+            //     judge_report_connect();
+            // }
         } else if (ret == 1) {
-            //  timeout  need to check ip can work
-            if (judge_report_connect() != NETSERVER_CONNECTED) {
-                if (is_report_unconnect == 0) {
-                    judge_report_unconnect();
-                }
-            } else {
-                if (is_report_connect == 0) {
-                    judge_report_connect();
-                }
-            }
+            // //  timeout  need to check ip can work
+            // if (judge_report_connect() != NETSERVER_CONNECTED) {
+            //     if (is_report_unconnect == 0) {
+            //         judge_report_unconnect();
+            //     }
+            // } else {
+            //     if (is_report_connect == 0) {
+            //         judge_report_connect();
+            //     }
+            // }
 
         } else {
             printf("recv error :: %d\n", errno);
@@ -196,17 +244,14 @@ int wifi_roam_scan_event() {
     int freq[6] = {0};
     static unsigned long time_sum = 0;
     int time = 1;
-    char testbuf[128] = {0};
-    int size = 0;
+    // int size = 0;
+    // char signalbuf[128] = {0};
 
     while (1) {
         ret = wifi_get_signal(&signal);
         if (ret == 0) {
-            printf("wifi current signal %d\n", signal);
-            sprintf(testbuf, "wifi current signal :: %d", signal);
-
-            size = send(sock_event_fd, testbuf, 128, 0);
-            printf("zpershuai :: send signal size %d\n", size);
+            // sprintf(signalbuf, "<3>CTRL-EVENT-SIGNAL signal: %d", signal);
+            // size = send(sock_event_fd, signalbuf, 128, 0);
 
             if (signal < WIFI_SWITCH_LIMIT_SIGNAL) {
 
@@ -222,12 +267,10 @@ int wifi_roam_scan_event() {
                         index = find_flag(index, scan_index, sizeof(scan_index) / sizeof(int));
 
                         first_time = 1;
-                        printf("rbscan index %d\n", index);
                     }
                     else {
                         index++;
 
-                        printf("rbscan index %d\n", index);
                         if (index == sizeof(scan_index) / sizeof(int)) {
                             index = 0;
                         }
@@ -244,7 +287,6 @@ int wifi_roam_scan_event() {
                     time_sum = 0;
                 }
 
-                printf( "robot scan time  %lu", time_sum);
                 if ((time_sum > 3 * sizeof(scan_index) / sizeof(int)) &&
                     (time_sum < 5 * sizeof(scan_index) / sizeof(int))) {
                     time = 60;
