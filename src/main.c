@@ -11,7 +11,6 @@
 #include <sys/un.h>
 
 #include <wpa_command.h>
-#include <ams/AmsExport.h>
 
 #include <json-c/json.h>
 
