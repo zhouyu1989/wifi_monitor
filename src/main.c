@@ -9,6 +9,8 @@
 #include <sys/socket.h>
 #include <linux/route.h>
 #include <sys/un.h>
+#include <pthread.h>
+#include <sys/prctl.h>
 
 #include <wpa_command.h>
 
@@ -35,6 +37,7 @@ static int sock_event_fd = 0;
 static int channel[26] = {2412, 2417, 2422, 2427, 2432, 2437, 2442, 2447, 2452, 2457, 2462, 2467, 2472, 5180, 5200, 5220, 5240, 5260, 5280, 5300, 5320, 5745, 5765, 5785, 5805, 5825};
 
 static int scan_index[6] = {4, 4, 5, 4, 4, 5};
+static pthread_t p_wifi_roam;
 
 /**
  * trans buf to net manager
@@ -73,7 +76,6 @@ static int json_transmit_buf(int sock, char *buf, int buflen)
 
     return ret;
 }
-
 
 int judge_report_connect()
 {
@@ -117,8 +119,6 @@ void judge_report_unconnect(){
 
 int wifi_get_monitor_event() {
     int ret = 0;
-    // int buflen = 127;
-    // char monitor_buf[128] = {0};
     int hardsharkfaild = 0;
     int nofoundtime = 0;
     int network_num = 0;
@@ -151,36 +151,7 @@ int wifi_get_monitor_event() {
                     printf("ret %d buf: %s len  %d size\n", ret, monitor_buf, buflen, size);
                 }
             }
-
-            // if (strstr(monitor_buf, "Handshake failed")) {
-            //     hardsharkfaild++;
-            // } else if (strstr (monitor_buf, "CTRL-EVENT-CONNECTED")) {
-            //     hardsharkfaild = 0;
-            //     nofoundtime = 0;
-            // } else if (strstr(monitor_buf, "CTRL-EVENT-NETWORK-NOT-FOUND")) {
-            //     nofoundtime++;
-            // } else if ((strstr(monitor_buf, "CTRL-EVENT-DISCONNECTED") != NULL) && (strstr(monitor_buf, "reason=3 locally_generated=1") != NULL)) {
-            //     judge_report_unconnect();
-            // } else {
-            //     continue;
-            // }
-
-            // if (((hardsharkfaild == WIFI_FAILED_TIMES) || (nofoundtime == WIFI_FAILED_TIMES)) && (is_report_unconnect == 0)) {
-            //     judge_report_unconnect();
-            // } else if (((hardsharkfaild == 0) && (nofoundtime == 0)) && (is_report_connect == 0)) {
-            //     judge_report_connect();
-            // }
         } else if (ret == 1) {
-            // //  timeout  need to check ip can work
-            // if (judge_report_connect() != NETSERVER_CONNECTED) {
-            //     if (is_report_unconnect == 0) {
-            //         judge_report_unconnect();
-            //     }
-            // } else {
-            //     if (is_report_connect == 0) {
-            //         judge_report_connect();
-            //     }
-            // }
 
         } else {
             printf("recv error :: %d\n", errno);
@@ -234,7 +205,7 @@ static int calc_scan_sum(int index)
     return sum;
 }
 
-int wifi_roam_scan_event() {
+void *wifi_roam_scan_event(void *arg) {
     int ret = 0;
     int signal = 0;
     int first_time = 0;
@@ -245,7 +216,7 @@ int wifi_roam_scan_event() {
     int time = 1;
     // int size = 0;
     // char signalbuf[128] = {0};
-
+    prctl(PR_SET_NAME,"wifi_roam");
     while (1) {
         ret = wifi_get_signal(&signal);
         if (ret == 0) {
@@ -301,8 +272,6 @@ int wifi_roam_scan_event() {
             }
         }
     }
-
-    return 0;
 }
 
 static int wifi_sock_init() {
@@ -322,12 +291,6 @@ static int wifi_sock_init() {
     strncpy(addr.sun_path, WIFI_EVENT_PATH, strlen(WIFI_EVENT_PATH));
     len = strlen(addr.sun_path) + sizeof(addr.sun_family);
 
-    // if (bind(sock_fd, (struct sockaddr *)&addr, len) < 0)  {
-    //     perror("bind error");
-    //     close(sock_fd);
-    //     return -2;
-    // }
-
     if (connect(sock_fd, (struct sockaddr *)&addr, len) < 0)  {
         perror("connect error");
         close(sock_fd);
@@ -339,6 +302,8 @@ static int wifi_sock_init() {
 
 int main(int argc, char **argv)
 {
+    int ret = 0;
+    
     while (1) {
         if ((access(WIFI_WPA_CTRL_PATH, F_OK)) != -1) {
             break;
@@ -365,12 +330,15 @@ int main(int argc, char **argv)
         return -1;
     }
 
-    if (fork() == 0) {
-        wifi_get_monitor_event();
-    } else {
-        wifi_roam_scan_event();
+    ret = pthread_create(&p_wifi_roam, NULL, wifi_roam_scan_event, NULL);
+    if (ret != 0) {
+        printf("can't create thread: %s\n", strerror(ret));
+        return -2;
     }
 
+    wifi_get_monitor_event();
 
+    pthread_join(p_wifi_roam, NULL);
+    
     return 0;
 }
