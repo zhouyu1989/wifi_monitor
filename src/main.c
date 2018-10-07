@@ -224,7 +224,7 @@ void *wifi_roam_scan_event(void *arg) {
             // size = send(sock_event_fd, signalbuf, 128, 0);
 
             if (signal < WIFI_SWITCH_LIMIT_SIGNAL) {
-
+                sleep(10);
             } else {
                 if (signal < WIFI_ROAM_LIMIT_SIGNAL) {
                     if (first_time == 0) {
